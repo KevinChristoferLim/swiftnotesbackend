@@ -3,8 +3,18 @@ const db = require('../config/database');
 class Note {
   static async create(noteData) {
     const [result] = await db.query(
-      'INSERT INTO notes (title, description, owner_id, user_id, folder_id) VALUES (?, ?, ?, ?, ?)',
-      [noteData.title, noteData.description || null, noteData.owner_id, noteData.user_id, noteData.folder_id || null]
+      'INSERT INTO notes (title, description, owner_id, user_id, folder_id, reminder_date_millis, reminder_time_millis, reminder_repeat, reminder_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        noteData.title,
+        noteData.description || null,
+        noteData.owner_id,
+        noteData.user_id,
+        noteData.folder_id || null,
+        noteData.reminder_date_millis || null,
+        noteData.reminder_time_millis || null,
+        noteData.reminder_repeat || null,
+        noteData.reminder_location || null
+      ]
     );
     return result.insertId;
   }
@@ -52,6 +62,22 @@ class Note {
     if (noteData.folder_id !== undefined) {
       fields.push('folder_id = ?');
       values.push(noteData.folder_id);
+    }
+    if (noteData.reminder_date_millis !== undefined) {
+      fields.push('reminder_date_millis = ?');
+      values.push(noteData.reminder_date_millis || null);
+    }
+    if (noteData.reminder_time_millis !== undefined) {
+      fields.push('reminder_time_millis = ?');
+      values.push(noteData.reminder_time_millis || null);
+    }
+    if (noteData.reminder_repeat !== undefined) {
+      fields.push('reminder_repeat = ?');
+      values.push(noteData.reminder_repeat || null);
+    }
+    if (noteData.reminder_location !== undefined) {
+      fields.push('reminder_location = ?');
+      values.push(noteData.reminder_location || null);
     }
 
     values.push(id);
