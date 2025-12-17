@@ -11,4 +11,7 @@ router.get('/folder/:folderId', authMiddleware, noteController.getNotesByFolderI
 router.put('/:id', authMiddleware, noteController.updateNote);
 router.delete('/:id', authMiddleware, noteController.deleteNote);
 
+// Add collaborator to a note
+router.post('/:noteId/collaborators', authMiddleware, noteController.addCollaborator);
+
 module.exports = router;

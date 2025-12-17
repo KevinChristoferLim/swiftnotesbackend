@@ -1,14 +1,21 @@
 const Note = require('../models/Note');
 const Folder = require('../models/Folder');
 const NoteCollaborator = require('../models/NoteCollaborator');
+const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
 const createNote = async (req, res) => {
   try {
-    const { title, description, folder_id } = req.body;
-    const userId = req.user.userId; 
+    // Accept both `description` (backend) and `content` (Android)
+    const title = req.body.title;
+    const description = req.body.description ?? req.body.content ?? null;
+    const folder_id = req.body.folder_id ?? req.body.folderId ?? null;
+    const userId = req.user.userId;
+
+    console.log('📝 createNote request:', { title, description, folder_id, userId, body: req.body });
 
     if (!title) {
+      console.log('❌ Title is missing or empty');
       return res.status(400).json({ 
         success: false,
         message: 'Title is required' 
@@ -18,12 +25,14 @@ const createNote = async (req, res) => {
     const noteId = await Note.create({
       title,
       description,
-      owner_id: userId,  
-      user_id: userId,   
+      owner_id: userId,
+      user_id: userId,
       folder_id,
       is_locked: false,
       lock_pin: null
     });
+
+    console.log('✅ Note created with ID:', noteId);
 
     if (folder_id) {
       await Folder.incrementNotesAmount(folder_id);
@@ -32,7 +41,8 @@ const createNote = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Note created successfully',
-      noteId,
+      id: noteId,
+      noteId: noteId,
       note: {
         id: noteId,
         title,
@@ -78,25 +88,28 @@ const getAllNotes = async (req, res) => {
     // Combine both
     const allNotes = [...ownNotes, ...collabNotesDetails];
     
-    // Hide description for locked notes
+    // Hide description for locked notes and ensure timestamps are numbers
     const sanitizedNotes = allNotes.map(note => {
-      if (note.is_locked) {
-        return {
-          ...note,
-          description: '🔒 This note is locked',
-          lock_pin: undefined
-        };
-      }
-      return {
+      const sanitized = {
         ...note,
-        lock_pin: undefined
+        lock_pin: undefined,
+        // Ensure timestamps are Unix milliseconds (numbers)
+        created_at: note.created_at ? new Date(note.created_at).getTime() : Date.now(),
+        updated_at: note.updated_at ? new Date(note.updated_at).getTime() : Date.now(),
+        // Convert is_locked from 0/1 to boolean
+        is_locked: Boolean(note.is_locked),
+        is_pinned: Boolean(note.is_pinned)
       };
+      
+      if (note.is_locked) {
+        sanitized.description = '🔒 This note is locked';
+      }
+      
+      return sanitized;
     });
 
-    res.json({ 
-      success: true,
-      notes: sanitizedNotes 
-    });
+    // Return raw array for Android clients that expect List<Note>
+    res.json(sanitizedNotes);
   } catch (error) {
     res.status(500).json({ 
       success: false,
@@ -347,6 +360,54 @@ const deleteNote = async (req, res) => {
   }
 };
 
+// POST /api/notes/:noteId/collaborators
+const addCollaborator = async (req, res) => {
+  try {
+    const { noteId } = req.params;
+    const { email, role } = req.body;
+    const addedBy = req.user.userId;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: 'Collaborator email is required' });
+    }
+
+    // Verify note exists and caller is owner
+    const note = await Note.findById(noteId);
+    if (!note) {
+      return res.status(404).json({ success: false, message: 'Note not found' });
+    }
+
+    if (note.user_id !== addedBy && note.owner_id !== addedBy) {
+      return res.status(403).json({ success: false, message: 'Only note owner can add collaborators' });
+    }
+
+    // Find user by email
+    const user = await User.findByEmail(email);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User with that email not found' });
+    }
+
+    if (user.id === addedBy) {
+      return res.status(400).json({ success: false, message: 'Cannot add yourself as collaborator' });
+    }
+
+    try {
+      await NoteCollaborator.add(noteId, user.id, addedBy, role || 'editor');
+    } catch (err) {
+      // handle duplicate entry
+      if (err.code === 'ER_DUP_ENTRY') {
+        return res.status(409).json({ success: false, message: 'User is already a collaborator' });
+      }
+      throw err;
+    }
+
+    res.json({ success: true, message: 'Collaborator added successfully' });
+  } catch (error) {
+    console.error('Add collaborator error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
 // ========== LOCK & UNLOCK FEATURES ==========
 
 const lockNote = async (req, res) => {
@@ -556,4 +617,5 @@ module.exports = {
   lockNote,
   unlockNote,
   viewLockedNote
+  ,addCollaborator
 };
