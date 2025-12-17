@@ -16,4 +16,8 @@ router.post('/reset-password', authController.resetPassword);
 // Expects multipart/form-data with optional `image` file and `username` / `email` fields
 router.put('/update-profile', authMiddleware, upload.single('image'), authController.updateProfile);
 
+// PUT /api/auth/change-password
+// Expects JSON body: { currentPassword, newPassword }
+router.put('/change-password', authMiddleware, authController.changePassword);
+
 module.exports = router;
