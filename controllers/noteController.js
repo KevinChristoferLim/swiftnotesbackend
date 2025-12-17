@@ -1,0 +1,559 @@
+const Note = require('../models/Note');
+const Folder = require('../models/Folder');
+const NoteCollaborator = require('../models/NoteCollaborator');
+const bcrypt = require('bcryptjs');
+
+const createNote = async (req, res) => {
+  try {
+    const { title, description, folder_id } = req.body;
+    const userId = req.user.userId; 
+
+    if (!title) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Title is required' 
+      });
+    }
+
+    const noteId = await Note.create({
+      title,
+      description,
+      owner_id: userId,  
+      user_id: userId,   
+      folder_id,
+      is_locked: false,
+      lock_pin: null
+    });
+
+    if (folder_id) {
+      await Folder.incrementNotesAmount(folder_id);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Note created successfully',
+      noteId,
+      note: {
+        id: noteId,
+        title,
+        description,
+        owner_id: userId,
+        user_id: userId,
+        folder_id,
+        is_locked: false
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const getAllNotes = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    // Get user's own notes
+    const ownNotes = await Note.findByUserId(userId);
+    
+    // Get collaborated notes
+    const collaboratedNotes = await NoteCollaborator.findByUserId(userId);
+    const collaboratedNoteIds = collaboratedNotes.map(n => n.note_id);
+    
+    // Get full details of collaborated notes
+    let collabNotesDetails = [];
+    for (let noteId of collaboratedNoteIds) {
+      const note = await Note.findById(noteId);
+      if (note) {
+        collabNotesDetails.push({
+          ...note,
+          is_collaboration: true
+        });
+      }
+    }
+    
+    // Combine both
+    const allNotes = [...ownNotes, ...collabNotesDetails];
+    
+    // Hide description for locked notes
+    const sanitizedNotes = allNotes.map(note => {
+      if (note.is_locked) {
+        return {
+          ...note,
+          description: '🔒 This note is locked',
+          lock_pin: undefined
+        };
+      }
+      return {
+        ...note,
+        lock_pin: undefined
+      };
+    });
+
+    res.json({ 
+      success: true,
+      notes: sanitizedNotes 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const getNoteById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const note = await Note.findById(id);
+
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Check if user is owner or collaborator
+    const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
+    if (note.user_id !== userId && !isCollaborator) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'You do not have access to this note' 
+      });
+    }
+
+    // If locked, hide description
+    if (note.is_locked) {
+      return res.json({ 
+        success: true,
+        note: {
+          ...note,
+          description: '🔒 This note is locked. Use unlock endpoint with PIN.',
+          lock_pin: undefined
+        }
+      });
+    }
+
+    res.json({ 
+      success: true,
+      note: {
+        ...note,
+        lock_pin: undefined
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const getNotesByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const requestUserId = req.user.userId;
+
+    // Only allow users to get their own notes
+    if (parseInt(userId) !== requestUserId) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'You can only view your own notes' 
+      });
+    }
+
+    const notes = await Note.findByUserId(userId);
+    
+    const sanitizedNotes = notes.map(note => {
+      if (note.is_locked) {
+        return {
+          ...note,
+          description: '🔒 This note is locked',
+          lock_pin: undefined
+        };
+      }
+      return {
+        ...note,
+        lock_pin: undefined
+      };
+    });
+
+    res.json({ 
+      success: true,
+      notes: sanitizedNotes 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const getNotesByFolderId = async (req, res) => {
+  try {
+    const { folderId } = req.params;
+    const userId = req.user.userId;
+    
+    const notes = await Note.findByFolderId(folderId);
+    
+    // Filter notes that user has access to (owner or collaborator)
+    const accessibleNotes = [];
+    for (let note of notes) {
+      const isCollaborator = await NoteCollaborator.isCollaborator(note.id, userId);
+      if (note.user_id === userId || isCollaborator) {
+        accessibleNotes.push(note);
+      }
+    }
+    
+    // Sanitize locked notes
+    const sanitizedNotes = accessibleNotes.map(note => {
+      if (note.is_locked) {
+        return {
+          ...note,
+          description: '🔒 This note is locked',
+          lock_pin: undefined
+        };
+      }
+      return {
+        ...note,
+        lock_pin: undefined
+      };
+    });
+
+    res.json({ 
+      success: true,
+      notes: sanitizedNotes 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const updateNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, folder_id } = req.body;
+    const userId = req.user.userId;
+
+    const note = await Note.findById(id);
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Check if user is owner or collaborator with editor role
+    const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
+    if (note.user_id !== userId && !isCollaborator) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'You are not authorized to update this note' 
+      });
+    }
+
+    // Cannot update locked note
+    if (note.is_locked) {
+      return res.status(423).json({ 
+        success: false,
+        message: 'Note is locked. Please unlock it first before updating.' 
+      });
+    }
+
+    const oldFolderId = note.folder_id;
+
+    const updateData = {};
+    if (title) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (folder_id !== undefined) updateData.folder_id = folder_id;
+
+    await Note.update(id, updateData);
+
+    if (folder_id !== undefined && oldFolderId !== folder_id) {
+      if (oldFolderId) {
+        await Folder.decrementNotesAmount(oldFolderId);
+      }
+      if (folder_id) {
+        await Folder.incrementNotesAmount(folder_id);
+      }
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Note updated successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const deleteNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId; 
+
+    const note = await Note.findById(id);
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Only owner can delete note
+    if (note.user_id !== userId) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Only note owner can delete this note' 
+      });
+    }
+
+    // Remove all collaborators first
+    await NoteCollaborator.removeAll(id);
+
+    await Note.delete(id);
+
+    if (note.folder_id) {
+      await Folder.decrementNotesAmount(note.folder_id);
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Note deleted successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+// ========== LOCK & UNLOCK FEATURES ==========
+
+const lockNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pin } = req.body;
+    const userId = req.user.userId;
+
+    if (!pin) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PIN is required to lock the note' 
+      });
+    }
+
+    if (pin.length < 4) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PIN must be at least 4 characters' 
+      });
+    }
+
+    const note = await Note.findById(id);
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Only owner can lock note
+    if (note.user_id !== userId) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'Only note owner can lock this note' 
+      });
+    }
+
+    if (note.is_locked) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Note is already locked' 
+      });
+    }
+
+    // Hash PIN
+    const hashedPin = await bcrypt.hash(pin, 10);
+    await Note.lockNote(id, hashedPin);
+
+    res.json({ 
+      success: true,
+      message: 'Note locked successfully' 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const unlockNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pin } = req.body;
+    const userId = req.user.userId;
+
+    if (!pin) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PIN is required to unlock the note' 
+      });
+    }
+
+    const note = await Note.findById(id);
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Check if user has access (owner or collaborator)
+    const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
+    if (note.user_id !== userId && !isCollaborator) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'You do not have access to this note' 
+      });
+    }
+
+    if (!note.is_locked) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Note is not locked' 
+      });
+    }
+
+    // Verify PIN
+    const isValidPin = await Note.verifyPin(id, pin);
+    if (!isValidPin) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid PIN' 
+      });
+    }
+
+    // Only owner can permanently unlock
+    if (note.user_id === userId) {
+      await Note.unlockNote(id);
+      return res.json({ 
+        success: true,
+        message: 'Note unlocked successfully' 
+      });
+    } else {
+      // Collaborator can only view, not unlock permanently
+      return res.json({ 
+        success: true,
+        message: 'PIN verified. Use /view endpoint to see content.',
+        temporary: true
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+const viewLockedNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pin } = req.body;
+    const userId = req.user.userId;
+
+    if (!pin) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'PIN is required to view locked note' 
+      });
+    }
+
+    const note = await Note.findById(id);
+    if (!note) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Note not found' 
+      });
+    }
+
+    // Check if user has access (owner or collaborator)
+    const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
+    if (note.user_id !== userId && !isCollaborator) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'You do not have access to this note' 
+      });
+    }
+
+    if (!note.is_locked) {
+      return res.json({ 
+        success: true,
+        note: {
+          ...note,
+          lock_pin: undefined
+        }
+      });
+    }
+
+    // Verify PIN
+    const isValidPin = await Note.verifyPin(id, pin);
+    if (!isValidPin) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid PIN' 
+      });
+    }
+
+    res.json({ 
+      success: true,
+      note: {
+        ...note,
+        lock_pin: undefined
+      },
+      message: 'Note content displayed temporarily. Note remains locked.'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error', 
+      error: error.message 
+    });
+  }
+};
+
+module.exports = {
+  createNote,
+  getAllNotes,
+  getNoteById,
+  getNotesByUserId,
+  getNotesByFolderId,
+  updateNote,
+  deleteNote,
+  lockNote,
+  unlockNote,
+  viewLockedNote
+};
