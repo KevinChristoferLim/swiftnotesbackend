@@ -4,8 +4,20 @@ const bcrypt = require('bcryptjs');
 class Note {
   static async create(noteData) {
     const [result] = await db.query(
-      'INSERT INTO notes (title, description, owner_id, user_id, folder_id, is_locked, lock_pin) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [noteData.title, noteData.description || null, noteData.owner_id, noteData.user_id, noteData.folder_id || null, noteData.is_locked ? 1 : 0, noteData.lock_pin || null]
+      'INSERT INTO notes (title, description, owner_id, user_id, folder_id, reminder_date_millis, reminder_time_millis, reminder_repeat, reminder_location, is_locked, lock_pin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        noteData.title,
+        noteData.description || null,
+        noteData.owner_id,
+        noteData.user_id,
+        noteData.folder_id || null,
+        noteData.reminder_date_millis || null,
+        noteData.reminder_time_millis || null,
+        noteData.reminder_repeat || null,
+        noteData.reminder_location || null,
+        noteData.is_locked ? 1 : 0, 
+        noteData.lock_pin || null
+      ]
     );
     return result.insertId;
   }
@@ -61,6 +73,21 @@ class Note {
     if (noteData.lock_pin !== undefined) {
       fields.push('lock_pin = ?');
       values.push(noteData.lock_pin);
+    if (noteData.reminder_date_millis !== undefined) {
+      fields.push('reminder_date_millis = ?');
+      values.push(noteData.reminder_date_millis || null);
+    }
+    if (noteData.reminder_time_millis !== undefined) {
+      fields.push('reminder_time_millis = ?');
+      values.push(noteData.reminder_time_millis || null);
+    }
+    if (noteData.reminder_repeat !== undefined) {
+      fields.push('reminder_repeat = ?');
+      values.push(noteData.reminder_repeat || null);
+    }
+    if (noteData.reminder_location !== undefined) {
+      fields.push('reminder_location = ?');
+      values.push(noteData.reminder_location || null);
     }
 
     values.push(id);
@@ -71,6 +98,7 @@ class Note {
     );
     return result.affectedRows;
   }
+}
 
   static async lockNote(id, hashedPin) {
     const [result] = await db.query('UPDATE notes SET is_locked = 1, lock_pin = ? WHERE id = ?', [hashedPin, id]);

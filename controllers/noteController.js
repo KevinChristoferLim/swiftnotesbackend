@@ -11,8 +11,12 @@ const createNote = async (req, res) => {
     const description = req.body.description ?? req.body.content ?? null;
     const folder_id = req.body.folder_id ?? req.body.folderId ?? null;
     const userId = req.user.userId;
+    const reminder_date_millis = req.body.reminder_date_millis ?? null;
+    const reminder_time_millis = req.body.reminder_time_millis ?? null;
+    const reminder_repeat = req.body.reminder_repeat ? JSON.stringify(req.body.reminder_repeat) : null;
+    const reminder_location = req.body.reminder_location ?? null;
 
-    console.log('📝 createNote request:', { title, description, folder_id, userId, body: req.body });
+    console.log('📝 createNote request:', { title, description, folder_id, userId, reminder_time_millis, body: req.body });
 
     if (!title) {
       console.log('❌ Title is missing or empty');
@@ -28,6 +32,10 @@ const createNote = async (req, res) => {
       owner_id: userId,
       user_id: userId,
       folder_id,
+      reminder_date_millis,
+      reminder_time_millis,
+      reminder_repeat,
+      reminder_location,
       is_locked: false,
       lock_pin: null
     });
@@ -50,7 +58,11 @@ const createNote = async (req, res) => {
         owner_id: userId,
         user_id: userId,
         folder_id,
-        is_locked: false
+        is_locked: false,
+        reminder_date_millis,
+        reminder_time_millis,
+        reminder_repeat: req.body.reminder_repeat,
+        reminder_location
       }
     });
   } catch (error) {
@@ -231,6 +243,10 @@ const updateNote = async (req, res) => {
     const { id } = req.params;
     const { title, description, folder_id } = req.body;
     const userId = req.user.userId;
+    const reminder_date_millis = req.body.reminder_date_millis ?? undefined;
+    const reminder_time_millis = req.body.reminder_time_millis ?? undefined;
+    const reminder_repeat = req.body.reminder_repeat ? JSON.stringify(req.body.reminder_repeat) : undefined;
+    const reminder_location = req.body.reminder_location ?? undefined;
 
     const note = await Note.findById(id);
     if (!note) {
@@ -263,6 +279,10 @@ const updateNote = async (req, res) => {
     if (title) updateData.title = title;
     if (description !== undefined) updateData.description = description;
     if (folder_id !== undefined) updateData.folder_id = folder_id;
+    if (reminder_date_millis !== undefined) updateData.reminder_date_millis = reminder_date_millis;
+    if (reminder_time_millis !== undefined) updateData.reminder_time_millis = reminder_time_millis;
+    if (reminder_repeat !== undefined) updateData.reminder_repeat = reminder_repeat;
+    if (reminder_location !== undefined) updateData.reminder_location = reminder_location;
 
     await Note.update(id, updateData);
 
