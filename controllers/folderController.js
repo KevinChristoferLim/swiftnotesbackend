@@ -3,12 +3,14 @@ const Folder = require('../models/Folder');
 const createFolder = async (req, res) => {
   try {
     const { name, tag } = req.body;
+    const userId = req.user.userId;
 
     if (!name) {
       return res.status(400).json({ message: 'Folder name is required' });
     }
 
-    const folderId = await Folder.create({ name, tag });
+    // Associate folder with creating user
+    const folderId = await Folder.create({ name, tag, user_id: userId });
 
     res.status(201).json({
       message: 'Folder created successfully',
@@ -21,7 +23,8 @@ const createFolder = async (req, res) => {
 
 const getAllFolders = async (req, res) => {
   try {
-    const folders = await Folder.findAll();
+    const userId = req.user.userId;
+    const folders = await Folder.findAll(userId);
     res.json({ folders });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
@@ -31,10 +34,16 @@ const getAllFolders = async (req, res) => {
 const getFolderById = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.userId;
     const folder = await Folder.findById(id);
 
     if (!folder) {
       return res.status(404).json({ message: 'Folder not found' });
+    }
+
+    // Ensure the folder belongs to the current user
+    if (folder.user_id !== userId) {
+      return res.status(403).json({ message: 'You do not have access to this folder' });
     }
 
     res.json({ folder });
@@ -47,10 +56,16 @@ const updateFolder = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, tag, notes_amount  } = req.body;
+    const userId = req.user.userId;
 
     const folder = await Folder.findById(id);
     if (!folder) {
       return res.status(404).json({ message: 'Folder not found' });
+    }
+
+    // Only owner may update
+    if (folder.user_id !== userId) {
+      return res.status(403).json({ message: 'Only folder owner may update' });
     }
 
     const updateData = {};
@@ -69,10 +84,15 @@ const updateFolder = async (req, res) => {
 const deleteFolder = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.userId;
 
     const folder = await Folder.findById(id);
     if (!folder) {
       return res.status(404).json({ message: 'Folder not found' });
+    }
+
+    if (folder.user_id !== userId) {
+      return res.status(403).json({ message: 'Only folder owner may delete' });
     }
 
     await Folder.delete(id);

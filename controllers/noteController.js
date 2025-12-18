@@ -101,9 +101,7 @@ const getAllNotes = async (req, res) => {
         is_pinned: Boolean(note.is_pinned)
       };
       
-      if (note.is_locked) {
-        sanitized.description = '🔒 This note is locked';
-      }
+      // Keep full description even if locked; clients use `is_locked` to render read-only UI
       
       return sanitized;
     });
@@ -141,17 +139,8 @@ const getNoteById = async (req, res) => {
       });
     }
 
-    // If locked, hide description
-    if (note.is_locked) {
-      return res.json({ 
-        success: true,
-        note: {
-          ...note,
-          description: '🔒 This note is locked. Use unlock endpoint with PIN.',
-          lock_pin: undefined
-        }
-      });
-    }
+    // Return note; clients will respect `is_locked` to render read-only state. lock_pin is omitted.
+
 
     res.json({ 
       success: true,
@@ -184,19 +173,10 @@ const getNotesByUserId = async (req, res) => {
 
     const notes = await Note.findByUserId(userId);
     
-    const sanitizedNotes = notes.map(note => {
-      if (note.is_locked) {
-        return {
-          ...note,
-          description: '🔒 This note is locked',
-          lock_pin: undefined
-        };
-      }
-      return {
-        ...note,
-        lock_pin: undefined
-      };
-    });
+    const sanitizedNotes = notes.map(note => ({
+      ...note,
+      lock_pin: undefined
+    }));
 
     res.json({ 
       success: true,
@@ -228,19 +208,10 @@ const getNotesByFolderId = async (req, res) => {
     }
     
     // Sanitize locked notes
-    const sanitizedNotes = accessibleNotes.map(note => {
-      if (note.is_locked) {
-        return {
-          ...note,
-          description: '🔒 This note is locked',
-          lock_pin: undefined
-        };
-      }
-      return {
-        ...note,
-        lock_pin: undefined
-      };
-    });
+    const sanitizedNotes = accessibleNotes.map(note => ({
+      ...note,
+      lock_pin: undefined
+    }));
 
     res.json({ 
       success: true,
@@ -416,6 +387,8 @@ const lockNote = async (req, res) => {
     const { pin } = req.body;
     const userId = req.user.userId;
 
+    console.log('LOCK attempt', { id, userId, pinProvided: !!pin });
+
     if (!pin) {
       return res.status(400).json({ 
         success: false,
@@ -432,6 +405,7 @@ const lockNote = async (req, res) => {
 
     const note = await Note.findById(id);
     if (!note) {
+      console.log('LOCK failed: note not found', { id });
       return res.status(404).json({ 
         success: false,
         message: 'Note not found' 
@@ -440,6 +414,7 @@ const lockNote = async (req, res) => {
 
     // Only owner can lock note
     if (note.user_id !== userId) {
+      console.log('LOCK denied: not owner', { noteUser: note.user_id, userId });
       return res.status(403).json({ 
         success: false,
         message: 'Only note owner can lock this note' 
@@ -447,6 +422,7 @@ const lockNote = async (req, res) => {
     }
 
     if (note.is_locked) {
+      console.log('LOCK skipped: already locked', { id });
       return res.status(400).json({ 
         success: false,
         message: 'Note is already locked' 
@@ -455,6 +431,7 @@ const lockNote = async (req, res) => {
 
     // Hash PIN
     const hashedPin = await bcrypt.hash(pin, 10);
+    console.log('LOCK hashing done, calling model lockNote', { id });
     await Note.lockNote(id, hashedPin);
 
     res.json({ 
@@ -462,6 +439,7 @@ const lockNote = async (req, res) => {
       message: 'Note locked successfully' 
     });
   } catch (error) {
+    console.error('LOCK error', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error', 
@@ -476,6 +454,8 @@ const unlockNote = async (req, res) => {
     const { pin } = req.body;
     const userId = req.user.userId;
 
+    console.log('UNLOCK attempt', { id, userId, pinProvided: !!pin });
+
     if (!pin) {
       return res.status(400).json({ 
         success: false,
@@ -485,6 +465,7 @@ const unlockNote = async (req, res) => {
 
     const note = await Note.findById(id);
     if (!note) {
+      console.log('UNLOCK failed: note not found', { id });
       return res.status(404).json({ 
         success: false,
         message: 'Note not found' 
@@ -494,6 +475,7 @@ const unlockNote = async (req, res) => {
     // Check if user has access (owner or collaborator)
     const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
     if (note.user_id !== userId && !isCollaborator) {
+      console.log('UNLOCK denied: no access', { noteUser: note.user_id, userId });
       return res.status(403).json({ 
         success: false,
         message: 'You do not have access to this note' 
@@ -501,6 +483,7 @@ const unlockNote = async (req, res) => {
     }
 
     if (!note.is_locked) {
+      console.log('UNLOCK skipped: note not locked', { id });
       return res.status(400).json({ 
         success: false,
         message: 'Note is not locked' 
@@ -509,6 +492,7 @@ const unlockNote = async (req, res) => {
 
     // Verify PIN
     const isValidPin = await Note.verifyPin(id, pin);
+    console.log('UNLOCK PIN valid:', isValidPin);
     if (!isValidPin) {
       return res.status(401).json({ 
         success: false,
@@ -532,6 +516,7 @@ const unlockNote = async (req, res) => {
       });
     }
   } catch (error) {
+    console.error('UNLOCK error', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error', 
@@ -543,18 +528,13 @@ const unlockNote = async (req, res) => {
 const viewLockedNote = async (req, res) => {
   try {
     const { id } = req.params;
-    const { pin } = req.body;
     const userId = req.user.userId;
 
-    if (!pin) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'PIN is required to view locked note' 
-      });
-    }
+    console.log('VIEW attempt', { id, userId });
 
     const note = await Note.findById(id);
     if (!note) {
+      console.log('VIEW failed: note not found', { id });
       return res.status(404).json({ 
         success: false,
         message: 'Note not found' 
@@ -564,40 +544,24 @@ const viewLockedNote = async (req, res) => {
     // Check if user has access (owner or collaborator)
     const isCollaborator = await NoteCollaborator.isCollaborator(id, userId);
     if (note.user_id !== userId && !isCollaborator) {
+      console.log('VIEW denied: no access', { noteUser: note.user_id, userId });
       return res.status(403).json({ 
         success: false,
         message: 'You do not have access to this note' 
       });
     }
 
-    if (!note.is_locked) {
-      return res.json({ 
-        success: true,
-        note: {
-          ...note,
-          lock_pin: undefined
-        }
-      });
-    }
-
-    // Verify PIN
-    const isValidPin = await Note.verifyPin(id, pin);
-    if (!isValidPin) {
-      return res.status(401).json({ 
-        success: false,
-        message: 'Invalid PIN' 
-      });
-    }
-
+    // Return note content (clients should render read-only if `is_locked` is true)
     res.json({ 
       success: true,
       note: {
         ...note,
         lock_pin: undefined
       },
-      message: 'Note content displayed temporarily. Note remains locked.'
+      message: note.is_locked ? 'Note is locked (read-only).' : undefined
     });
   } catch (error) {
+    console.error('VIEW error', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error', 

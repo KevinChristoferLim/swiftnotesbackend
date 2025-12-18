@@ -2,9 +2,10 @@ const db = require('../config/database');
 
 class Folder {
   static async create(folderData) {
+    // folderData may include user_id (owner)
     const [result] = await db.query(
-      'INSERT INTO folders (name, tag, notes_amount, color) VALUES (?, ?, ?, ?)',
-      [folderData.name, folderData.tag || null, folderData.notes_amount || 0, folderData.color || null]
+      'INSERT INTO folders (name, tag, notes_amount, color, user_id) VALUES (?, ?, ?, ?, ?)',
+      [folderData.name, folderData.tag || null, folderData.notes_amount || 0, folderData.color || null, folderData.user_id || null]
     );
     return result.insertId;
   }
@@ -14,7 +15,11 @@ class Folder {
     return rows[0];
   }
 
-  static async findAll() {
+  static async findAll(userId = null) {
+    if (userId) {
+      const [rows] = await db.query('SELECT * FROM folders WHERE user_id = ?', [userId]);
+      return rows;
+    }
     const [rows] = await db.query('SELECT * FROM folders');
     return rows;
   }

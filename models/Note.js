@@ -1,10 +1,11 @@
 const db = require('../config/database');
+const bcrypt = require('bcryptjs');
 
 class Note {
   static async create(noteData) {
     const [result] = await db.query(
-      'INSERT INTO notes (title, description, owner_id, user_id, folder_id) VALUES (?, ?, ?, ?, ?)',
-      [noteData.title, noteData.description || null, noteData.owner_id, noteData.user_id, noteData.folder_id || null]
+      'INSERT INTO notes (title, description, owner_id, user_id, folder_id, is_locked, lock_pin) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [noteData.title, noteData.description || null, noteData.owner_id, noteData.user_id, noteData.folder_id || null, noteData.is_locked ? 1 : 0, noteData.lock_pin || null]
     );
     return result.insertId;
   }
@@ -53,6 +54,14 @@ class Note {
       fields.push('folder_id = ?');
       values.push(noteData.folder_id);
     }
+    if (noteData.is_locked !== undefined) {
+      fields.push('is_locked = ?');
+      values.push(noteData.is_locked ? 1 : 0);
+    }
+    if (noteData.lock_pin !== undefined) {
+      fields.push('lock_pin = ?');
+      values.push(noteData.lock_pin);
+    }
 
     values.push(id);
 
@@ -61,6 +70,27 @@ class Note {
       values
     );
     return result.affectedRows;
+  }
+
+  static async lockNote(id, hashedPin) {
+    const [result] = await db.query('UPDATE notes SET is_locked = 1, lock_pin = ? WHERE id = ?', [hashedPin, id]);
+    return result.affectedRows;
+  }
+
+  static async unlockNote(id) {
+    const [result] = await db.query('UPDATE notes SET is_locked = 0, lock_pin = NULL WHERE id = ?', [id]);
+    return result.affectedRows;
+  }
+
+  static async verifyPin(id, pin) {
+    const [rows] = await db.query('SELECT lock_pin FROM notes WHERE id = ?', [id]);
+    const row = rows[0];
+    if (!row || !row.lock_pin) return false;
+    try {
+      return await bcrypt.compare(pin, row.lock_pin);
+    } catch (err) {
+      return false;
+    }
   }
 
   static async delete(id) {

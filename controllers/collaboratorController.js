@@ -34,7 +34,7 @@ const addCollaborator = async (req, res) => {
     if (note.is_locked) {
       return res.status(423).json({
         success: false,
-        message: 'Cannot add collaborators to locked note. Please unlock it first.'
+        message: 'You cannot share locked notes'
       });
     }
 

@@ -11,6 +11,11 @@ router.get('/folder/:folderId', authMiddleware, noteController.getNotesByFolderI
 router.put('/:id', authMiddleware, noteController.updateNote);
 router.delete('/:id', authMiddleware, noteController.deleteNote);
 
+// Lock/unlock/view locked note
+router.post('/:id/lock', authMiddleware, noteController.lockNote);
+router.post('/:id/unlock', authMiddleware, noteController.unlockNote);
+router.post('/:id/view', authMiddleware, noteController.viewLockedNote);
+
 // Add collaborator to a note
 
 
