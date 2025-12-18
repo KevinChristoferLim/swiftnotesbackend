@@ -83,7 +83,7 @@ const getAllNotes = async (req, res) => {
     
     // Get collaborated notes
     const collaboratedNotes = await NoteCollaborator.findByUserId(userId);
-    const collaboratedNoteIds = collaboratedNotes.map(n => n.note_id);
+    const collaboratedNoteIds = [...new Set(collaboratedNotes.map(n => n.note_id))];
     
     // Get full details of collaborated notes
     let collabNotesDetails = [];
@@ -100,8 +100,66 @@ const getAllNotes = async (req, res) => {
     // Combine both
     const allNotes = [...ownNotes, ...collabNotesDetails];
     
+    // Enrich notes with collaborators info
+    const enrichedNotes = [];
+    for (let note of allNotes) {
+      const collaborators = await NoteCollaborator.findByNoteId(note.id);
+      
+      // If there are collaborators, it's a collaboration
+      const isCollaboration = Boolean(note.is_collaboration || (collaborators && collaborators.length > 0));
+      
+      // Fetch owner info to include in participants
+      const ownerId = note.owner_id || note.user_id;
+      const owner = await User.findById(ownerId);
+      
+      const participants = [];
+      if (owner) {
+          participants.push({
+              id: String(owner.id),
+              username: owner.username,
+              email: owner.email,
+              profile_picture: owner.profile_picture,
+              role: 'owner'
+          });
+      }
+      
+      // Add other collaborators
+      if (collaborators) {
+          collaborators.forEach(c => {
+              if (String(c.id) !== String(ownerId)) {
+                  participants.push({
+                      id: String(c.id),
+                      username: c.username,
+                      email: c.email,
+                      profile_picture: c.profile_picture,
+                      role: c.role || 'editor'
+                  });
+              }
+          });
+      }
+
+      enrichedNotes.push({
+        ...note,
+        is_collaboration: isCollaboration,
+        collaborators: participants
+      });
+    }
+    
     // Hide description for locked notes and ensure timestamps are numbers
-    const sanitizedNotes = allNotes.map(note => {
+    const sanitizedNotes = enrichedNotes.map(note => {
+      const reminder = (note && (note.reminder_time_millis || note.reminder_date_millis || note.reminder_repeat || note.reminder_location)) ? {
+        reminder_date_millis: note.reminder_date_millis || null,
+        reminder_time_millis: note.reminder_time_millis || null,
+        reminder_repeat: (() => {
+          try {
+            return note.reminder_repeat ? JSON.parse(note.reminder_repeat) : null;
+          } catch (e) {
+            return note.reminder_repeat || null;
+          }
+        })(),
+        reminder_location: note.reminder_location || null
+      } : null;
+
       const sanitized = {
         ...note,
         lock_pin: undefined,
@@ -110,19 +168,21 @@ const getAllNotes = async (req, res) => {
         updated_at: note.updated_at ? new Date(note.updated_at).getTime() : Date.now(),
         // Convert is_locked from 0/1 to boolean
         is_locked: Boolean(note.is_locked),
-        is_pinned: Boolean(note.is_pinned)
+        is_pinned: Boolean(note.is_pinned),
+        reminder // nested object for clients
       };
-      
+
       if (note.is_locked) {
         sanitized.description = '🔒 This note is locked';
       }
-      
+
       return sanitized;
     });
 
     // Return raw array for Android clients that expect List<Note>
     res.json(sanitizedNotes);
   } catch (error) {
+    console.error('getAllNotes error:', error);
     res.status(500).json({ 
       success: false,
       message: 'Server error', 
@@ -153,6 +213,46 @@ const getNoteById = async (req, res) => {
       });
     }
 
+    const collaborators = await NoteCollaborator.findByNoteId(id);
+    const ownerId = note.owner_id || note.user_id;
+    const owner = await User.findById(ownerId);
+    
+    const participants = [];
+    if (owner) {
+        participants.push({
+            id: String(owner.id),
+            username: owner.username,
+            email: owner.email,
+            profile_picture: owner.profile_picture,
+            role: 'owner'
+        });
+    }
+    if (collaborators) {
+        collaborators.forEach(c => {
+            if (String(c.id) !== String(ownerId)) {
+                participants.push({
+                    id: String(c.id),
+                    username: c.username,
+                    email: c.email,
+                    profile_picture: c.profile_picture,
+                    role: c.role || 'editor'
+                });
+            }
+        });
+    }
+
+    const isCollaboration = Boolean(isCollaborator || (collaborators && collaborators.length > 0));
+
+    // Build nested reminder object
+    const reminder = (note && (note.reminder_time_millis || note.reminder_date_millis || note.reminder_repeat || note.reminder_location)) ? {
+      reminder_date_millis: note.reminder_date_millis || null,
+      reminder_time_millis: note.reminder_time_millis || null,
+      reminder_repeat: (() => {
+        try { return note.reminder_repeat ? JSON.parse(note.reminder_repeat) : null; } catch (e) { return note.reminder_repeat || null; }
+      })(),
+      reminder_location: note.reminder_location || null
+    } : null;
+
     // If locked, hide description
     if (note.is_locked) {
       return res.json({ 
@@ -160,7 +260,10 @@ const getNoteById = async (req, res) => {
         note: {
           ...note,
           description: '🔒 This note is locked. Use unlock endpoint with PIN.',
-          lock_pin: undefined
+          lock_pin: undefined,
+          is_collaboration: isCollaboration,
+          collaborators: participants,
+          reminder
         }
       });
     }
@@ -169,7 +272,10 @@ const getNoteById = async (req, res) => {
       success: true,
       note: {
         ...note,
-        lock_pin: undefined
+        lock_pin: undefined,
+        is_collaboration: isCollaboration,
+        collaborators: participants,
+        reminder
       }
     });
   } catch (error) {
@@ -197,16 +303,25 @@ const getNotesByUserId = async (req, res) => {
     const notes = await Note.findByUserId(userId);
     
     const sanitizedNotes = notes.map(note => {
+      const reminder = (note && (note.reminder_time_millis || note.reminder_date_millis || note.reminder_repeat || note.reminder_location)) ? {
+        reminder_date_millis: note.reminder_date_millis || null,
+        reminder_time_millis: note.reminder_time_millis || null,
+        reminder_repeat: (() => { try { return note.reminder_repeat ? JSON.parse(note.reminder_repeat) : null } catch (e) { return note.reminder_repeat || null } })(),
+        reminder_location: note.reminder_location || null
+      } : null;
+
       if (note.is_locked) {
         return {
           ...note,
           description: '🔒 This note is locked',
-          lock_pin: undefined
+          lock_pin: undefined,
+          reminder
         };
       }
       return {
         ...note,
-        lock_pin: undefined
+        lock_pin: undefined,
+        reminder
       };
     });
 
@@ -241,16 +356,25 @@ const getNotesByFolderId = async (req, res) => {
     
     // Sanitize locked notes
     const sanitizedNotes = accessibleNotes.map(note => {
+      const reminder = (note && (note.reminder_time_millis || note.reminder_date_millis || note.reminder_repeat || note.reminder_location)) ? {
+        reminder_date_millis: note.reminder_date_millis || null,
+        reminder_time_millis: note.reminder_time_millis || null,
+        reminder_repeat: (() => { try { return note.reminder_repeat ? JSON.parse(note.reminder_repeat) : null } catch (e) { return note.reminder_repeat || null } })(),
+        reminder_location: note.reminder_location || null
+      } : null;
+
       if (note.is_locked) {
         return {
           ...note,
           description: '🔒 This note is locked',
-          lock_pin: undefined
+          lock_pin: undefined,
+          reminder
         };
       }
       return {
         ...note,
-        lock_pin: undefined
+        lock_pin: undefined,
+        reminder
       };
     });
 

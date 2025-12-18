@@ -11,7 +11,7 @@ class NoteCollaborator {
 
   static async findByNoteId(noteId) {
     const [rows] = await db.query(
-      `SELECT nc.*, u.username, u.email 
+      `SELECT u.id, u.username, u.email, u.profile_picture, nc.role, nc.added_by
        FROM note_collaborators nc 
        JOIN user u ON nc.user_id = u.id 
        WHERE nc.note_id = ?`,
