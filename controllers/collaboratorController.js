@@ -34,7 +34,7 @@ const addCollaborator = async (req, res) => {
     if (note.is_locked) {
       return res.status(423).json({
         success: false,
-        message: 'Cannot add collaborators to locked note. Please unlock it first.'
+        message: 'You cannot share locked notes'
       });
     }
 
@@ -143,7 +143,9 @@ const removeCollaborator = async (req, res) => {
       });
     }
 
-    if (note.owner_id !== userId) {
+    // Check if user is owner (either via owner_id or user_id)
+    const isOwner = note.owner_id === userId || note.user_id === userId;
+    if (!isOwner) {
       return res.status(403).json({
         success: false,
         message: 'Only note owner can remove collaborators'

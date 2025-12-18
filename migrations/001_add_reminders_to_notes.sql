@@ -32,9 +32,8 @@ CREATE TABLE IF NOT EXISTS reminders_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Add columns to notes table for lock_pin (if using PIN-based locking instead of password)
--- Uncomment if you want to migrate from lock_password to lock_pin
--- ALTER TABLE notes
--- ADD COLUMN lock_pin VARCHAR(255) DEFAULT NULL AFTER lock_password;
+ALTER TABLE notes
+ADD COLUMN lock_pin VARCHAR(255) DEFAULT NULL AFTER is_locked;
 
 -- Verification: Check the notes table structure
 -- SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT 
