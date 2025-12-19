@@ -2,7 +2,7 @@ name: ESLint
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
 
 jobs:
@@ -15,14 +15,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
+
+      - name: Debug repo structure
+        run: |
+          pwd
+          ls
+          ls app || true
+          ls app/src || true
+          ls app/src/Backend || true
 
       - name: Install dependencies
-        run: |
-          cd app/src/Backend/swiftnotesapp
-          npm ci
+        run: npm ci --prefix app/src/Backend/swiftnotesapp
 
       - name: Run ESLint
-        run: |
-          cd app/src/Backend/swiftnotesapp
-          npm run lint
+        run: npm run lint --prefix app/src/Backend/swiftnotesapp
